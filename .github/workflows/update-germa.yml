@@ -1,0 +1,72 @@
+name: Update GERMA blocklist
+
+on:
+  schedule:
+    # Jede Stunde zur Minute 30.
+    # Absichtlich nicht zur vollen Stunde, um GitHub-Lastspitzen zu vermeiden.
+    - cron: "30 * * * *"
+
+  # Ermöglicht zusätzlich einen manuellen Test über den Actions-Tab.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-germa-blocklist
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate AdGuard Home blocklist
+        run: python scripts/update-germa.py
+
+      - name: Check for changes
+        id: changes
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain -- germa-adguard.txt)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "GERMA blocklist has changed."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes in GERMA blocklist."
+          fi
+
+      - name: Commit and push updated blocklist
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add germa-adguard.txt
+          git commit -m "Update GERMA blocklist"
+          git push
+
+      # GitHub deaktiviert geplante Workflows in öffentlichen Repositorys
+      # nach 60 Tagen ohne Repository-Aktivität.
+      # Deshalb erzeugen wir am 1. jedes Monats um 00:17 UTC einen leeren
+      # Keepalive-Commit, sofern in diesem Lauf keine GERMA-Änderung vorlag.
+      - name: Keep scheduled workflow active
+        if: steps.changes.outputs.changed == 'false'
+        shell: bash
+        run: |
+          if [[ "$(date -u +'%d%H')" == "0100" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Keep scheduled workflow active"
+            git push
+          else
+            echo "No keepalive commit required."
+          fi
